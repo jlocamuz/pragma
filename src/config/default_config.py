@@ -7,8 +7,10 @@ DEFAULT_CONFIG = {
     "local_timezone": "America/Argentina/Buenos_Aires",
 
 
+    # reglas
+    "restar_llegada_anticipada_de_horas_extras": True,
 
-    "hora_viatico1_comida1": 6, 
+
     # Jornada
     'jornada_completa_horas': 8,
     'tolerancia_minutos': 20,

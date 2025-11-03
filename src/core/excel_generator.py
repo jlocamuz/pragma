@@ -92,6 +92,8 @@ class ExcelReportGenerator:
                 'Horas Feriado': self.hours_to_excel_time(totals.get('total_holiday_hours', 0.0)),
                 'Total Tardanzas': self.hours_to_excel_time(totals.get('total_tardanza_horas', 0.0)),
                 'Total Retiros Anticipados': self.hours_to_excel_time(totals.get('total_retiro_anticipado_horas', 0.0)),
+                'Horas Extra Diurnas': self.hours_to_excel_time(totals.get('total_extra_day_hours', 0.0)),
+                'Horas Extra Nocturnas': self.hours_to_excel_time(totals.get('total_extra_night_hours', 0.0)),
             }
             summary_rows.append(row)
 
@@ -108,7 +110,6 @@ class ExcelReportGenerator:
                 # Observaciones
                 observations = []
 
-                
                 if d.get('is_holiday'):
                     observations.append(f"Feriado: {d.get('holiday_name') or 'N/A'}")
                 if d.get('has_time_off'):
@@ -127,12 +128,13 @@ class ExcelReportGenerator:
                     # Horas en formato Excel (ya calculadas en hours_calculator)
                     'Horas Trabajadas': self.hours_to_excel_time(d.get('hours_worked', 0.0)),
                     'Horas extra': self.hours_to_excel_time(d.get('extra_hours', 0.0)),
+                    'Horas Extra Diurnas': self.hours_to_excel_time(d.get('extra_hours_day', 0.0)),
+                    'Horas Extra Nocturnas': self.hours_to_excel_time(d.get('extra_hours_night', 0.0)),
                     'Horas Regulares': self.hours_to_excel_time(d.get('regular_hours', 0.0)),
                     'Horas Extra 50%': self.hours_to_excel_time(d.get('extra_hours_50', 0.0)),
                     'Horas Extra 100%': self.hours_to_excel_time(d.get('extra_hours_100', 0.0)),
                     'Horas Extra 150%': self.hours_to_excel_time(d.get('extra_hours_150', 0.0)),
                     'Horas Nocturnas': self.hours_to_excel_time(d.get('night_hours', 0.0)),
-
                     'Horas Feriado': self.hours_to_excel_time(d.get('holiday_hours', 0.0)),
                     'Es Franco': 'Sí' if d.get('is_rest_day') else 'No',
                     'Es Feriado': 'Sí' if d.get('is_holiday') else 'No',
@@ -143,7 +145,6 @@ class ExcelReportGenerator:
                     # Tardanza y Retiro Anticipado YA calculados en hours_calculator
                     'Tardanza': self.hours_to_excel_time(d.get('tardanza_horas', 0.0)),
                     'Retiro Anticipado': self.hours_to_excel_time(d.get('retiro_anticipado_horas', 0.0)),
-                    
                 }
                 daily_rows.append(row)
 
@@ -190,7 +191,8 @@ class ExcelReportGenerator:
         # Columnas que deben mostrarse como tiempo
         time_cols = {
             'Total Horas', 'Horas Regulares', 'Horas Extra 50%', 'Horas Extra 100%', 
-            'Horas Nocturnas', 'Horas Feriado', 'Total Tardanzas', 'Total Retiros Anticipados'
+            'Horas Nocturnas', 'Horas Feriado', 'Total Tardanzas', 'Total Retiros Anticipados',
+            'Horas Extra Diurnas', 'Horas Extra Nocturnas',
         }
 
         # Encabezados (fila 3)
@@ -236,7 +238,8 @@ class ExcelReportGenerator:
         time_cols = {
             'Horas Trabajadas', 'Horas Regulares', 'Horas Extra 50%',
             'Horas Extra 100%', 'Horas Nocturnas', 'Horas Feriado', 
-            'Horas extra', 'Tardanza', 'Retiro Anticipado'
+            'Horas extra', 'Tardanza', 'Retiro Anticipado',
+            'Horas Extra Diurnas', 'Horas Extra Nocturnas',
         }
 
         # Encabezados (fila 3)

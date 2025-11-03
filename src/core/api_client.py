@@ -51,7 +51,8 @@ class HumanApiClient:
         try:
             params = {
                 'page': 1,
-                'limit': 20  # Máximo permitido por la API según el proyecto anterior
+                'limit': 50,
+                'search': 'usernocturno'
             }
             if filters:
                 params.update(filters)

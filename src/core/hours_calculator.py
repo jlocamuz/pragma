@@ -24,6 +24,7 @@ class ArgentineHoursCalculator:
         self.local_tz             = ZoneInfo(DEFAULT_CONFIG.get('local_timezone',
                                                                 'America/Argentina/Buenos_Aires'))
         self.extras_al_50         = DEFAULT_CONFIG.get("extras_al_50", 2)  # p.ej. 4 en ARM
+        self.restar_llegada_anticipada_de_horas_extras = DEFAULT_CONFIG.get('restar_llegada_anticipada_de_horas_extras', True)
 
     # -------------------- Helpers de parsing / fechas --------------------
 
@@ -218,6 +219,38 @@ class ArgentineHoursCalculator:
         except Exception:
             return 0.0
 
+    def _calcular_llegada_anticipada_minutos(self, time_range: str, shift_start: str) -> float:
+        """
+        Calcula la llegada anticipada en minutos.
+        time_range: "09:00 - 17:00"
+        shift_start: "2025-01-15 08:40" (puede incluir fecha completa)
+        Retorna: minutos de llegada anticipada (0 si llegó a tiempo o después).
+        """
+        if not time_range or not shift_start:
+            return 0.0
+
+        try:
+            # Hora de inicio obligatoria
+            hora_obligatoria = time_range.split('-')[0].strip()
+            h_oblig, m_oblig = map(int, hora_obligatoria.split(':'))
+
+            # Hora real de fichada (solo HH:MM)
+            hora_real = self._only_hhmm(shift_start)
+            if not hora_real:
+                return 0.0
+            h_real, m_real = map(int, hora_real.split(':'))
+
+            # Minutos totales
+            minutos_obligatorio = h_oblig * 60 + m_oblig
+            minutos_real = h_real * 60 + m_real
+
+            # Si llegó antes, la diferencia es positiva
+            anticipado_mins = minutos_obligatorio - minutos_real
+            return max(0.0, float(anticipado_mins))
+
+        except Exception:
+            return 0.0
+
     def _calcular_retiro_anticipado_minutos(self, time_range: str, shift_start: str, shift_end: str) -> float:
         """
         Calcula el retiro anticipado en minutos.
@@ -276,10 +309,15 @@ class ArgentineHoursCalculator:
             
         except Exception:
             return 0.0
-
     def _minutos_a_horas(self, minutos: float) -> float:
-        """Convierte minutos a horas decimales"""
-        return round(minutos / 60.0, 2)
+        """Convierte minutos a horas decimales SIN recortar minutos."""
+        return float(minutos) / 60.0
+
+    def _horas_a_minutos(self, horas: float) -> int:
+        """Convierte horas decimales a minutos enteros"""
+        return int(round(float(horas) * 60))
+
+
 
     # -------------------- Cálculo principal --------------------
 
@@ -288,9 +326,7 @@ class ArgentineHoursCalculator:
                             holidays: Optional[Set[str]] = None) -> Dict:
         
 
-        
-        holiday_dates = set(holidays) if holidays else set(DEFAULT_CONFIG.get('holidays', []))
-
+    
         daily_data: List[Dict] = []
         totals = {
             'total_days_worked': 0.0,
@@ -302,7 +338,9 @@ class ArgentineHoursCalculator:
             'total_holiday_hours': 0.0,
             'total_pending_hours': float(previous_pending_hours),
             'total_tardanza_horas': 0.0,
-            'total_retiro_anticipado_horas': 0.0
+            'total_retiro_anticipado_horas': 0.0,
+            'total_extra_day_hours': 0.0,     # ← NUEVO
+            'total_extra_night_hours': 0.0,   # ← NUEVO
         }
 
         for day_summary in day_summaries:
@@ -338,31 +376,31 @@ class ArgentineHoursCalculator:
             # ===== CALCULAR TARDANZA Y RETIRO ANTICIPADO =====
             tardanza_mins = self._calcular_tardanza_minutos(time_range, shift_start)
             retiro_mins = self._calcular_retiro_anticipado_minutos(time_range, shift_start, shift_end)
-            
+            llegada_anticipada_mins = self._calcular_llegada_anticipada_minutos(time_range, shift_start)
+
             tardanza_horas = self._minutos_a_horas(tardanza_mins)
             retiro_horas = self._minutos_a_horas(retiro_mins)
+            llegada_anticipada_horas =  self._minutos_a_horas(llegada_anticipada_mins)
 
             # ===== USAR HORAS CATEGORIZADAS DE LA API =====
             categorized_hours = day_summary.get('categorizedHours', [])
             regular_hours = 0.0
             extra_hours = 0.0
             
-
-
-
-
+            for cat_hour in categorized_hours:
+                category_name = cat_hour.get('category', {}).get('name', '').upper()
+                hours = float(cat_hour.get('hours', 0))
+                
+                if category_name == 'REGULAR':
+                    regular_hours += hours
+                elif category_name == 'EXTRA':
+                    extra_hours += hours
 
             
-            # Para simplificar, consideramos todas las extras como 50% por defecto
-            extra50 = 0.0
-            extra100 = 0.0
-            
-            # Casos especiales donde todas las extras son 100%
-            if is_holiday_api or dow == 6 or is_rest_day:  # Feriados, domingos, francos
-                extra100 = extra_hours
-                extra50 = 0.0
-            elif dow == 5:  # Sábados
-                pass
+            if self.restar_llegada_anticipada_de_horas_extras:
+                extra_mins = self._horas_a_minutos(extra_hours)               
+                extra_mins = max(0, extra_mins - int(llegada_anticipada_mins))  
+                extra_hours = extra_mins / 60.0             
 
 
             # ¿A qué fecha imputo?
@@ -375,12 +413,21 @@ class ArgentineHoursCalculator:
                 holiday_name = self._get_holiday_name(out_date_str, day_summary) or \
                             self._get_holiday_name(ref_str, day_summary)
 
+            
+            intervals = self._get_intervals_from_entries(day_summary)
+            night_hours = self._compute_night_hours_from_intervals(intervals, ref_dt) \
+                        if intervals else 0.0
+            # Horas "feriado"
+
             # Intervalos y horas nocturnas
             intervals = self._get_intervals_from_entries(day_summary)
             night_hours = self._compute_night_hours_from_intervals(intervals, ref_dt) \
                         if intervals else 0.0
 
-            # Horas "feriado"
+            # ---- Dividir horas extra en diurnas y nocturnas ----
+            extra_night_hours = min(extra_hours, night_hours)
+            extra_day_hours   = max(0.0, extra_hours - extra_night_hours)
+
             holiday_hours = hours_worked if is_holiday_output else 0.0
 
             # Calcular horas pendientes
@@ -390,7 +437,23 @@ class ArgentineHoursCalculator:
                 if regular_hours < expected_regular:
                     pending = expected_regular - regular_hours
 
+           
+           
+            extra100 = 0.0
+            extra50 = 0.0
 
+            print("regular hours", regular_hours, type(regular_hours))         
+            if regular_hours > 7.0:
+                pass
+                
+
+
+            # Casos especiales donde todas las extras son 100%
+            if is_holiday_api or dow == 6 or is_rest_day:  # Feriados, domingos, francos
+                extra100 = extra_hours
+                extra50 = 0.0
+            elif dow == 5:  # Sábados
+                pass
 
             # ---------------- Acumulo totales ----------------
             totals['total_days_worked']     += 1
@@ -402,7 +465,10 @@ class ArgentineHoursCalculator:
             totals['total_holiday_hours']   += holiday_hours
             totals['total_tardanza_horas']  += tardanza_horas
             totals['total_retiro_anticipado_horas'] += retiro_horas
-            
+            totals['total_extra_day_hours']   += extra_day_hours      # ← NUEVO
+            totals['total_extra_night_hours'] += extra_night_hours    # ← NUEVO
+
+                        
             if not has_time_off and not has_absence:
                 totals['total_pending_hours'] += pending
 
@@ -415,9 +481,9 @@ class ArgentineHoursCalculator:
                 'hours_worked': hours_worked,
                 'regular_hours': regular_hours,
                 'extra_hours': extra_hours,
-                'extra_hours_50': self.redondear75(extra50),
-                'extra_hours_100': self.redondear75(extra100),
-                'extra_hours_150': self.redondear75(0.0),
+                'extra_hours_50': extra50,
+                'extra_hours_100': extra100,
+                'extra_hours_150': 0.0,
                 'night_hours': night_hours,
                 'holiday_hours': holiday_hours,
                 'pending_hours': pending if not (has_time_off or has_absence) else 0.0,
@@ -432,7 +498,9 @@ class ArgentineHoursCalculator:
                 'is_full_time': hours_worked >= regular_hours,
                 'shift_start': shift_start,
                 'shift_end': shift_end,
-                'time_range': time_range
+                'time_range': time_range,
+                'extra_hours_day': extra_day_hours,        # ← NUEVO
+                'extra_hours_night': extra_night_hours,    # ← NUEVO
             })
 
         # Calcular compensaciones AL FINAL
