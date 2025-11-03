@@ -94,6 +94,9 @@ class ExcelReportGenerator:
                 'Total Retiros Anticipados': self.hours_to_excel_time(totals.get('total_retiro_anticipado_horas', 0.0)),
                 'Horas Extra Diurnas': self.hours_to_excel_time(totals.get('total_extra_day_hours', 0.0)),
                 'Horas Extra Nocturnas': self.hours_to_excel_time(totals.get('total_extra_night_hours', 0.0)),
+                'Horas Extra 50% Nocturnas':self.hours_to_excel_time(totals.get('total_extra_night_hours_50', 0.0)),
+                'Horas Extra 100% Nocturnas':self.hours_to_excel_time(totals.get('total_extra_night_hours_100', 0.0)),
+
             }
             summary_rows.append(row)
 
@@ -130,6 +133,10 @@ class ExcelReportGenerator:
                     'Horas extra': self.hours_to_excel_time(d.get('extra_hours', 0.0)),
                     'Horas Extra Diurnas': self.hours_to_excel_time(d.get('extra_hours_day', 0.0)),
                     'Horas Extra Nocturnas': self.hours_to_excel_time(d.get('extra_hours_night', 0.0)),
+                    'Horas Extra 50% Nocturnas':self.hours_to_excel_time(d.get('extra_night_hours_50', 0.0)),
+                    'Horas Extra 100% Nocturnas':self.hours_to_excel_time(d.get('extra_night_hours_100', 0.0)),
+
+
                     'Horas Regulares': self.hours_to_excel_time(d.get('regular_hours', 0.0)),
                     'Horas Extra 50%': self.hours_to_excel_time(d.get('extra_hours_50', 0.0)),
                     'Horas Extra 100%': self.hours_to_excel_time(d.get('extra_hours_100', 0.0)),
@@ -192,7 +199,7 @@ class ExcelReportGenerator:
         time_cols = {
             'Total Horas', 'Horas Regulares', 'Horas Extra 50%', 'Horas Extra 100%', 
             'Horas Nocturnas', 'Horas Feriado', 'Total Tardanzas', 'Total Retiros Anticipados',
-            'Horas Extra Diurnas', 'Horas Extra Nocturnas',
+            'Horas Extra Diurnas', 'Horas Extra Nocturnas', 'Horas Extra 50% Nocturnas', 'Horas Extra 100% Nocturnas'
         }
 
         # Encabezados (fila 3)
@@ -239,7 +246,7 @@ class ExcelReportGenerator:
             'Horas Trabajadas', 'Horas Regulares', 'Horas Extra 50%',
             'Horas Extra 100%', 'Horas Nocturnas', 'Horas Feriado', 
             'Horas extra', 'Tardanza', 'Retiro Anticipado',
-            'Horas Extra Diurnas', 'Horas Extra Nocturnas',
+            'Horas Extra Diurnas', 'Horas Extra Nocturnas', 'Horas Extra 50% Nocturnas', 'Horas Extra 100% Nocturnas'
         }
 
         # Encabezados (fila 3)

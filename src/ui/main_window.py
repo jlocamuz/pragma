@@ -1170,22 +1170,16 @@ class MainWindow(QMainWindow):
         if result['success']:
             self.status_label.setText("Estado: ¡Reporte completado!")
             excel_path = result['excel_path']
-            stats = result['stats']
             
             filename = os.path.basename(excel_path)
             self.last_report_label.setText(f"Último reporte: {filename}")
             
             self.log_message(f"✅ Reporte generado exitosamente: {filename}")
-            self.log_message(f"📊 Estadísticas: {stats['total_employees']} empleados, {stats['total_hours_worked']} horas")
             
             reply = QMessageBox.information(
                 self, "¡Reporte Completado!", 
                 f"El reporte se ha generado exitosamente.\n\n"
                 f"📁 Archivo: {filename}\n"
-                f"👥 Empleados: {stats['total_employees']}\n"
-                f"⏰ Horas totales: {stats['total_hours_worked']}\n"
-                f"📈 Horas regulares: {stats['total_regular_hours']}\n"
-                f"⚡ Horas extra: {stats['total_extra_hours_50'] + stats['total_extra_hours_100']}\n\n"
                 f"¿Deseas abrir el archivo?",
                 QMessageBox.Yes | QMessageBox.No
             )

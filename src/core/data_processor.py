@@ -189,12 +189,10 @@ class DataProcessor:
                 progress_callback(100, "¡Reporte completado!")
             
             # 4. Calcular estadísticas finales
-            stats = self._calculate_final_stats(processed_employees)
             
             return {
                 'success': True,
                 'excel_path': excel_path,
-                'stats': stats,
                 'processed_employees': len(processed_employees),
                 'date_range': {
                     'start_date': start_date,
@@ -214,39 +212,6 @@ class DataProcessor:
                 'error': error_msg,
                 'stage': 'processing'
             }
-    
-    def _calculate_final_stats(self, processed_employees: Dict) -> Dict:
-        """Calcula estadísticas finales del reporte"""
-        if not processed_employees:
-            return {
-                'total_employees': 0,
-                'total_hours_worked': 0,
-                'total_regular_hours': 0,
-                'total_extra_hours_50': 0,
-                'total_extra_hours_100': 0,
-                'total_night_hours': 0,
-                'total_pending_hours': 0,
-                'avg_hours_per_employee': 0
-            }
-        
-        total_employees = len(processed_employees)
-        total_hours_worked = sum(emp['totals']['total_hours_worked'] for emp in processed_employees.values())
-        total_regular_hours = sum(emp['totals']['total_regular_hours'] for emp in processed_employees.values())
-        total_extra_hours_50 = sum(emp['totals']['total_extra_hours_50'] for emp in processed_employees.values())
-        total_extra_hours_100 = sum(emp['totals']['total_extra_hours_100'] for emp in processed_employees.values())
-        total_night_hours = sum(emp['totals']['total_night_hours'] for emp in processed_employees.values())
-        total_pending_hours = sum(emp['compensations']['remaining_pending_hours'] for emp in processed_employees.values())
-        
-        return {
-            'total_employees': total_employees,
-            'total_hours_worked': round(total_hours_worked, 2),
-            'total_regular_hours': round(total_regular_hours, 2),
-            'total_extra_hours_50': round(total_extra_hours_50, 2),
-            'total_extra_hours_100': round(total_extra_hours_100, 2),
-            'total_night_hours': round(total_night_hours, 2),
-            'total_pending_hours': round(total_pending_hours, 2),
-            'avg_hours_per_employee': round(total_hours_worked / total_employees, 2) if total_employees > 0 else 0
-        }
     
     def get_available_filters(self, progress_callback: Callable = None) -> Dict:
         """

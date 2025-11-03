@@ -28,6 +28,7 @@ class ArgentineHoursCalculator:
 
     # -------------------- Helpers de parsing / fechas --------------------
 
+
     def redondear75(self, valor: float) -> float:
         """
         Redondea solo cuando el decimal es exactamente .75
@@ -309,6 +310,8 @@ class ArgentineHoursCalculator:
             
         except Exception:
             return 0.0
+    
+
     def _minutos_a_horas(self, minutos: float) -> float:
         """Convierte minutos a horas decimales SIN recortar minutos."""
         return float(minutos) / 60.0
@@ -341,6 +344,9 @@ class ArgentineHoursCalculator:
             'total_retiro_anticipado_horas': 0.0,
             'total_extra_day_hours': 0.0,     # ← NUEVO
             'total_extra_night_hours': 0.0,   # ← NUEVO
+            'total_extra_night_hours_50': 0.0,
+            'total_extra_night_hours_100': 0.0
+
         }
 
         for day_summary in day_summaries:
@@ -350,8 +356,12 @@ class ArgentineHoursCalculator:
             is_rest_day    = not bool(day_summary.get('isWorkday', True))  # FRANCO
             is_workday     = bool(day_summary.get('isWorkday', True))  # Día laboral
 
-
             slots = day_summary.get('timeSlots') or [] 
+            
+            
+            if is_rest_day and slots == []:
+                continue
+
             time_range = (
                 f"{slots[0]['startTime']} - {slots[0]['endTime']}"
                 if slots and slots[0].get('startTime') and slots[0].get('endTime')
@@ -368,6 +378,8 @@ class ArgentineHoursCalculator:
             hours_worked = float(day_summary.get('hours', {}).get('worked', 0)
                                 or day_summary.get('totalHours', 0) or 0)
             
+            
+
             # ---- Horarios de turno para display ----
             disp_start_d, disp_start_h, disp_end_d, disp_end_h = self._display_from_entries(day_summary)
             shift_start = " ".join([disp_start_d, disp_start_h]).strip()
@@ -401,7 +413,7 @@ class ArgentineHoursCalculator:
                 extra_mins = self._horas_a_minutos(extra_hours)               
                 extra_mins = max(0, extra_mins - int(llegada_anticipada_mins))  
                 extra_hours = extra_mins / 60.0             
-
+            
 
             # ¿A qué fecha imputo?
             out_date_str = ref_str
@@ -424,9 +436,7 @@ class ArgentineHoursCalculator:
             night_hours = self._compute_night_hours_from_intervals(intervals, ref_dt) \
                         if intervals else 0.0
 
-            # ---- Dividir horas extra en diurnas y nocturnas ----
-            extra_night_hours = min(extra_hours, night_hours)
-            extra_day_hours   = max(0.0, extra_hours - extra_night_hours)
+
 
             holiday_hours = hours_worked if is_holiday_output else 0.0
 
@@ -437,23 +447,30 @@ class ArgentineHoursCalculator:
                 if regular_hours < expected_regular:
                     pending = expected_regular - regular_hours
 
+            extra_night_hours = min(extra_hours, night_hours)
+
+            extra_day_hours   = max(0.0, extra_hours - extra_night_hours)
            
            
             extra100 = 0.0
             extra50 = 0.0
+            extra_night_hours_50 = 0.0
+            extra_night_hours_100 = 0.0
+            # ---- Dividir horas extra en diurnas y nocturnas ----
 
-            print("regular hours", regular_hours, type(regular_hours))         
-            if regular_hours > 7.0:
+
+            
+            if dow == 5:
                 pass
-                
-
-
-            # Casos especiales donde todas las extras son 100%
-            if is_holiday_api or dow == 6 or is_rest_day:  # Feriados, domingos, francos
-                extra100 = extra_hours
-                extra50 = 0.0
-            elif dow == 5:  # Sábados
+            elif dow == 6:
                 pass
+            else:
+                if regular_hours > 7.0 and dow != 5 and dow != 6:
+                    extra_night_hours_50 += extra_night_hours
+                    extra50 += extra_day_hours
+
+
+
 
             # ---------------- Acumulo totales ----------------
             totals['total_days_worked']     += 1
@@ -467,7 +484,8 @@ class ArgentineHoursCalculator:
             totals['total_retiro_anticipado_horas'] += retiro_horas
             totals['total_extra_day_hours']   += extra_day_hours      # ← NUEVO
             totals['total_extra_night_hours'] += extra_night_hours    # ← NUEVO
-
+            totals['total_extra_night_hours_50'] += extra_night_hours_50
+            totals['total_extra_night_hours_100'] += extra_night_hours_100
                         
             if not has_time_off and not has_absence:
                 totals['total_pending_hours'] += pending
@@ -501,85 +519,22 @@ class ArgentineHoursCalculator:
                 'time_range': time_range,
                 'extra_hours_day': extra_day_hours,        # ← NUEVO
                 'extra_hours_night': extra_night_hours,    # ← NUEVO
+                'extra_night_hours_50': extra_night_hours_50,
+                'extra_night_hours_100': extra_night_hours_100
+
+                
             })
 
-        # Calcular compensaciones AL FINAL
-        compensations = self.calculate_compensations(
-            totals['total_extra_hours_50'],
-            totals['total_extra_hours_100'],
-            totals['total_pending_hours']
-        )
 
         return {
             'employee_info': employee_info,
             'daily_data': daily_data,
             'totals': totals,
-            'compensations': compensations
-        }
-
-    def calculate_hour_distribution(self, hours_worked: float, date: datetime,
-                                    is_holiday: bool = False, has_time_off: bool = False,
-                                    night_hours: float = 0.0) -> Dict:
-        """
-        Mantengo por compatibilidad
-        """
-        if hours_worked == 0:
-            return {
-                'hours_worked': 0.0,
-                'regular_hours': 0.0,
-                'extra_hours_50': 0.0,
-                'extra_hours_100': 0.0,
-                'night_hours': float(night_hours),
-                'pending_hours': 0.0
-            }
-
-        day_of_week = date.weekday()
-        if day_of_week == 6:
-            return {
-                'hours_worked': float(hours_worked),
-                'regular_hours': 0.0,
-                'extra_hours_50': 0.0,
-                'extra_hours_100': float(hours_worked),
-                'night_hours': float(night_hours),
-                'pending_hours': 0.0
-            }
-
-        dist = self._weekday_distribution(float(hours_worked), has_time_off)
-        return {
-            'hours_worked': float(hours_worked),
-            'regular_hours': float(dist['regular']),
-            'extra_hours_50': float(dist['extra50']),
-            'extra_hours_100': float(dist['extra100']),
-            'night_hours': float(night_hours),
-            'pending_hours': float(dist['pending'])
         }
 
     # -------------------- Otras utilidades --------------------
 
-    def calculate_compensations(self, extra_hours_50: float, extra_hours_100: float, pending_hours: float) -> Dict:
-        compensated_with_50 = 0.0
-        compensated_with_100 = 0.0
-        remaining = float(pending_hours)
 
-        if remaining > 0 and extra_hours_50 > 0:
-            compensated_with_50 = min(remaining, extra_hours_50)
-            remaining -= compensated_with_50
-
-        if remaining > 0 and extra_hours_100 > 0:
-            max_comp_100 = extra_hours_100 * 1.5
-            compensated_with_100 = min(remaining, max_comp_100)
-            remaining -= compensated_with_100
-
-        net50 = float(extra_hours_50) - compensated_with_50
-        net100 = float(extra_hours_100) - (compensated_with_100 / 1.5 if compensated_with_100 else 0.0)
-
-        return {
-            'compensated_with_50': float(compensated_with_50),
-            'compensated_with_100': float(compensated_with_100),
-            'net_extra_hours_50': float(net50),
-            'net_extra_hours_100': float(net100),
-            'remaining_pending_hours': float(remaining)
-        }
 
     def get_day_of_week_spanish(self, date: datetime) -> str:
         days = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo']
@@ -613,6 +568,3 @@ def process_employee_data_from_day_summaries(day_summaries: List[Dict], employee
     return calc.process_employee_data(day_summaries, employee_info, previous_pending_hours, holidays or set())
 
 
-def calculate_compensations(extra_hours_50: float, extra_hours_100: float, pending_hours: float) -> Dict:
-    calc = ArgentineHoursCalculator()
-    return calc.calculate_compensations(extra_hours_50, extra_hours_100, pending_hours)
