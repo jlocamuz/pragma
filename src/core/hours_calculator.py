@@ -594,11 +594,18 @@ class ArgentineHoursCalculator:
             elif dow == 6:  # Domingo
                 extra_night_hours_100 += extra_night_hours
                 extra100 += extra_day_hours
-
             else:  # Lun–Vie
                 if regular_hours > 7.0:
+                    # Calculo preliminar
                     extra_night_hours_50 += extra_night_hours
                     extra50 += extra_day_hours
+
+                    # 🚫 Descartar si son menores a 1 hora
+                    if extra_night_hours_50 < 1.0:
+                        extra_night_hours_50 = 0.0
+                    if extra50 < 1.0:
+                        extra50 = 0.0
+
 
             # === Redondeo final de extras / nocturnas / feriados (si está activado) ===
             extra_day_hours        = self._maybe_redondear_extras(extra_day_hours)
