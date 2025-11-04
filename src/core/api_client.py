@@ -52,7 +52,7 @@ class HumanApiClient:
             params = {
                 'page': 1,
                 'limit': 50,
-                'search': 'userdiurno'
+                #'search': 'usernocturno'
             }
             if filters:
                 params.update(filters)

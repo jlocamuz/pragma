@@ -8,7 +8,10 @@ DEFAULT_CONFIG = {
 
 
     # reglas
-    "restar_llegada_anticipada_de_horas_extras": True,
+    "restar_llegada_anticipada_de_horas_extras": True,  
+    'usar_decimales_en_excel': False,
+    "mostrar_ceros_como_guion": True,  
+    'redondear': True,
 
 
     # Jornada

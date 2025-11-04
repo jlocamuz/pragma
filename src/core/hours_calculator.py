@@ -16,18 +16,123 @@ class ArgentineHoursCalculator:
     def __init__(self):
         self.jornada_completa     = DEFAULT_CONFIG['jornada_completa_horas']
         self.hora_nocturna_inicio = DEFAULT_CONFIG['hora_nocturna_inicio']  # se usa
-        self.hora_nocturna_fin    = DEFAULT_CONFIG['hora_nocturna_fin']  # se usa 
+        self.hora_nocturna_fin    = DEFAULT_CONFIG['hora_nocturna_fin']     # se usa 
         self.sabado_limite        = DEFAULT_CONFIG.get('sabado_limite_hora', 13)
         self.tolerancia_minutos   = DEFAULT_CONFIG['tolerancia_minutos']
         self.fragmento_minutos    = DEFAULT_CONFIG['fragmento_minutos']
         self.holiday_names        = DEFAULT_CONFIG.get('holiday_names', {})
-        self.local_tz             = ZoneInfo(DEFAULT_CONFIG.get('local_timezone',
-                                                                'America/Argentina/Buenos_Aires'))
+        self.local_tz             = ZoneInfo(
+            DEFAULT_CONFIG.get('local_timezone', 'America/Argentina/Buenos_Aires')
+        )
         self.extras_al_50         = DEFAULT_CONFIG.get("extras_al_50", 2)  # p.ej. 4 en ARM
-        self.restar_llegada_anticipada_de_horas_extras = DEFAULT_CONFIG.get('restar_llegada_anticipada_de_horas_extras', True)
+        self.restar_llegada_anticipada_de_horas_extras = DEFAULT_CONFIG.get(
+            'restar_llegada_anticipada_de_horas_extras', True
+        )
+
+        # Flag general de redondeo: podés usar 'redondear_extras' o 'redondear'
+        self.redondear_extras = DEFAULT_CONFIG.get(
+            'redondear_extras',
+            DEFAULT_CONFIG.get('redondear', False)
+        )
 
     # -------------------- Helpers de parsing / fechas --------------------
 
+    def redondear_extras_a_media_hora(self, horas: float) -> float:
+        """
+        Redondea horas a múltiplos de 0.5 hs, con esta lógica:
+        - Se toman las horas en minutos.
+        - Se separan horas enteras y minutos restantes.
+        - Si el resto < fragmento_minutos (por defecto 30) -> se descarta.
+        - Si el resto >= fragmento_minutos -> se suma 0.5 hs.
+
+        Ejemplos:
+            1h05m (1.0833) -> 1.0
+            1h54m (1.9)    -> 1.5
+            2h00m (2.0)    -> 2.0
+        """
+        if not horas or horas <= 0:
+            return 0.0
+
+        minutos = int(round(horas * 60))
+        horas_enteras, resto = divmod(minutos, 60)
+
+        # Usamos fragmento_minutos (por config, normalmente 30) como corte
+        corte = getattr(self, "fragmento_minutos", 30)
+
+        if resto >= corte:
+            return float(horas_enteras) + 0.5
+        else:
+            return float(horas_enteras)
+
+    def _maybe_redondear_extras(self, horas: float) -> float:
+        """
+        Aplica el redondeo a media hora SOLO si el flag de config está en True.
+        Si no, devuelve el valor original.
+        """
+        if not self.redondear_extras:
+            return horas
+        return self.redondear_extras_a_media_hora(horas)
+
+    def _split_extra_day_hours_at_13(self, shift_start: str, shift_end: str,
+                                     extra_day_hours: float) -> Tuple[float, float]:
+        """
+        Divide las horas extra DIURNAS (extra_day_hours) en:
+        - antes de las 13:00
+        - después de las 13:00
+
+        Suposición importante:
+        - Las horas extra están al FINAL de la jornada (las últimas horas trabajadas).
+        """
+
+        if extra_day_hours <= 0:
+            return 0.0, 0.0
+
+        try:
+            hs = self._only_hhmm(shift_start)
+            he = self._only_hhmm(shift_end)
+            if not he:
+                return 0.0, 0.0
+
+            if not hs:
+                hs = he  # fallback
+
+            # Pasar a minutos desde 00:00
+            h_ini, m_ini = map(int, hs.split(':'))
+            h_fin, m_fin = map(int, he.split(':'))
+            start_min = h_ini * 60 + m_ini
+            end_min = h_fin * 60 + m_fin
+
+            # Si el fin es <= inicio, asumimos cruce de medianoche
+            if end_min <= start_min:
+                end_min += 24 * 60
+
+            # Duración del bloque de horas extra diurnas (en minutos)
+            extra_min = int(round(extra_day_hours * 60))
+
+            # Bloque de extra diurna al final de la jornada: [extra_start, end_min)
+            extra_start = end_min - extra_min
+
+            # Por seguridad, no permitir que el bloque extra arranque antes del inicio real
+            if extra_start < start_min:
+                extra_start = start_min
+
+            limite_1300 = 13 * 60  # 13:00 en minutos
+
+            before_13_min = 0
+            after_13_min = 0
+
+            # Parte del bloque extra ANTES de las 13:00 → [extra_start, min(end_min, limite_1300))
+            if extra_start < limite_1300:
+                before_13_min = max(0, min(end_min, limite_1300) - extra_start)
+
+            # Parte del bloque extra DESPUÉS de las 13:00 → [max(extra_start, limite_1300), end_min)
+            if end_min > limite_1300:
+                after_13_min = max(0, end_min - max(extra_start, limite_1300))
+
+            return before_13_min / 60.0, after_13_min / 60.0
+
+        except Exception:
+            return 0.0, 0.0
 
     def redondear75(self, valor: float) -> float:
         """
@@ -42,9 +147,9 @@ class ArgentineHoursCalculator:
         if abs(valor % 1 - 0.75) < 1e-9:
             return math.floor(valor) + 1
         return valor
-    
+
     #"referenceDate": "2025-10-23", 
-    def _get_ref_str(self, day_summary: Dict) -> str: 
+    def _get_ref_str(self, day_summary: Dict) -> str:
         ref = day_summary.get('referenceDate') or day_summary.get('date') or ''
         return ref[:10]
 
@@ -252,7 +357,9 @@ class ArgentineHoursCalculator:
         except Exception:
             return 0.0
 
-    def _calcular_retiro_anticipado_minutos(self, time_range: str, shift_start: str, shift_end: str) -> float:
+    def _calcular_retiro_anticipado_minutos(self, time_range: str,
+                                            shift_start: str,
+                                            shift_end: str) -> float:
         """
         Calcula el retiro anticipado en minutos.
         Maneja correctamente turnos nocturnos que cruzan medianoche.
@@ -320,16 +427,14 @@ class ArgentineHoursCalculator:
         """Convierte horas decimales a minutos enteros"""
         return int(round(float(horas) * 60))
 
-
-
     # -------------------- Cálculo principal --------------------
 
-    def process_employee_data(self, day_summaries: List[Dict], employee_info: Dict,
-                            previous_pending_hours: float = 0,
-                            holidays: Optional[Set[str]] = None) -> Dict:
-        
+    def process_employee_data(self,
+                              day_summaries: List[Dict],
+                              employee_info: Dict,
+                              previous_pending_hours: float = 0,
+                              holidays: Optional[Set[str]] = None) -> Dict:
 
-    
         daily_data: List[Dict] = []
         totals = {
             'total_days_worked': 0.0,
@@ -342,24 +447,32 @@ class ArgentineHoursCalculator:
             'total_pending_hours': float(previous_pending_hours),
             'total_tardanza_horas': 0.0,
             'total_retiro_anticipado_horas': 0.0,
-            'total_extra_day_hours': 0.0,     # ← NUEVO
-            'total_extra_night_hours': 0.0,   # ← NUEVO
+            'total_extra_day_hours': 0.0,
+            'total_extra_night_hours': 0.0,
             'total_extra_night_hours_50': 0.0,
-            'total_extra_night_hours_100': 0.0
-
+            'total_extra_night_hours_100': 0.0,
+            'total_holiday_night_hours': 0.0,
         }
+
+        holidays = holidays or set()
 
         for day_summary in day_summaries:
             is_holiday_api = bool(day_summary.get('holidays'))
             has_time_off   = bool(day_summary.get('timeOffRequests'))
             has_absence    = 'ABSENT' in (day_summary.get('incidences') or [])
             is_rest_day    = not bool(day_summary.get('isWorkday', True))  # FRANCO
-            is_workday     = bool(day_summary.get('isWorkday', True))  # Día laboral
+            is_workday     = bool(day_summary.get('isWorkday', True))      # Día laboral   
+            slots = day_summary.get('timeSlots') or []
+            
 
-            slots = day_summary.get('timeSlots') or [] 
-            
-            
-            if is_rest_day and slots == []:
+            if (
+                is_rest_day and              # es franco / domingo
+                not is_holiday_api and       # no es feriado
+                not has_time_off and         # sin licencia
+                not has_absence and          # sin ausencia cargada
+                not slots and                # sin horario obligatorio
+                not (day_summary.get('entries') or [])  # sin fichadas
+            ):
                 continue
 
             time_range = (
@@ -369,35 +482,36 @@ class ArgentineHoursCalculator:
             )
 
             ref_str = self._get_ref_str(day_summary)
-
             if not ref_str:
                 continue
+
             ref_dt = datetime.strptime(ref_str, '%Y-%m-%d')
             dow = ref_dt.weekday()  # 0=Lun … 6=Dom
 
-            hours_worked = float(day_summary.get('hours', {}).get('worked', 0)
-                                or day_summary.get('totalHours', 0) or 0)
-            
-            
+            hours_worked = float(
+                day_summary.get('hours', {}).get('worked', 0)
+                or day_summary.get('totalHours', 0)
+                or 0
+            )
 
             # ---- Horarios de turno para display ----
             disp_start_d, disp_start_h, disp_end_d, disp_end_h = self._display_from_entries(day_summary)
             shift_start = " ".join([disp_start_d, disp_start_h]).strip()
-            shift_end = " ".join([disp_end_d, disp_end_h]).strip()
+            shift_end   = " ".join([disp_end_d, disp_end_h]).strip()
 
             # ===== CALCULAR TARDANZA Y RETIRO ANTICIPADO =====
-            tardanza_mins = self._calcular_tardanza_minutos(time_range, shift_start)
-            retiro_mins = self._calcular_retiro_anticipado_minutos(time_range, shift_start, shift_end)
-            llegada_anticipada_mins = self._calcular_llegada_anticipada_minutos(time_range, shift_start)
+            tardanza_mins            = self._calcular_tardanza_minutos(time_range, shift_start)
+            retiro_mins              = self._calcular_retiro_anticipado_minutos(time_range, shift_start, shift_end)
+            llegada_anticipada_mins  = self._calcular_llegada_anticipada_minutos(time_range, shift_start)
 
-            tardanza_horas = self._minutos_a_horas(tardanza_mins)
-            retiro_horas = self._minutos_a_horas(retiro_mins)
-            llegada_anticipada_horas =  self._minutos_a_horas(llegada_anticipada_mins)
+            tardanza_horas           = self._minutos_a_horas(tardanza_mins)
+            retiro_horas             = self._minutos_a_horas(retiro_mins)
+            llegada_anticipada_horas = self._minutos_a_horas(llegada_anticipada_mins)
 
             # ===== USAR HORAS CATEGORIZADAS DE LA API =====
             categorized_hours = day_summary.get('categorizedHours', [])
             regular_hours = 0.0
-            extra_hours = 0.0
+            extra_hours   = 0.0
             
             for cat_hour in categorized_hours:
                 category_name = cat_hour.get('category', {}).get('name', '').upper()
@@ -408,12 +522,16 @@ class ArgentineHoursCalculator:
                 elif category_name == 'EXTRA':
                     extra_hours += hours
 
+            # Aplico redondeo (si está activado) a las horas extra totales antes de otros ajustes
+            extra_hours = self._maybe_redondear_extras(extra_hours)
             
             if self.restar_llegada_anticipada_de_horas_extras:
                 extra_mins = self._horas_a_minutos(extra_hours)               
                 extra_mins = max(0, extra_mins - int(llegada_anticipada_mins))  
                 extra_hours = extra_mins / 60.0             
             
+            # Vuelvo a aplicar redondeo tras descontar llegada anticipada
+            extra_hours = self._maybe_redondear_extras(extra_hours)
 
             # ¿A qué fecha imputo?
             out_date_str = ref_str
@@ -423,22 +541,23 @@ class ArgentineHoursCalculator:
             holiday_name = None
             if is_holiday_output:
                 holiday_name = self._get_holiday_name(out_date_str, day_summary) or \
-                            self._get_holiday_name(ref_str, day_summary)
+                               self._get_holiday_name(ref_str, day_summary)
 
-            
             intervals = self._get_intervals_from_entries(day_summary)
             night_hours = self._compute_night_hours_from_intervals(intervals, ref_dt) \
-                        if intervals else 0.0
-            # Horas "feriado"
+                          if intervals else 0.0
 
-            # Intervalos y horas nocturnas
-            intervals = self._get_intervals_from_entries(day_summary)
-            night_hours = self._compute_night_hours_from_intervals(intervals, ref_dt) \
-                        if intervals else 0.0
+            # ---- Cálculo de horas feriado ----
+            holiday_hours      = 0.0  # horas feriado diurnas
+            holiday_night_hours = 0.0  # horas feriado nocturnas
 
+            if is_holiday_output and intervals:
+                # Total nocturnas en ese feriado (ventana nocturna config)
+                holiday_night_hours = self._compute_night_hours_from_intervals(intervals, ref_dt)
 
-
-            holiday_hours = hours_worked if is_holiday_output else 0.0
+                # El resto del tiempo trabajado en feriado son las diurnas
+                total_hours_holiday = hours_worked
+                holiday_hours = max(0.0, total_hours_holiday - holiday_night_hours)
 
             # Calcular horas pendientes
             pending = 0.0
@@ -448,54 +567,76 @@ class ArgentineHoursCalculator:
                     pending = expected_regular - regular_hours
 
             extra_night_hours = min(extra_hours, night_hours)
-
             extra_day_hours   = max(0.0, extra_hours - extra_night_hours)
-           
            
             extra100 = 0.0
             extra50 = 0.0
-            extra_night_hours_50 = 0.0
+            extra_night_hours_50  = 0.0
             extra_night_hours_100 = 0.0
-            # ---- Dividir horas extra en diurnas y nocturnas ----
 
+            """
+            Horas Extra 100%: Horas extra días sábados (post 13hs) y todo el domingo.
+            Horas Extra 100% Nocturna: Horas extra los sábados y domingos de 22hs a 06hs.       
+            """
+            if dow == 5:  # Sábado
+                # Nocturnas del sábado → 100% nocturnas
+                extra_night_hours_100 += extra_night_hours
 
-            
-            if dow == 5:
-                pass
-            elif dow == 6:
-                pass
-            else:
-                if regular_hours > 7.0 and dow != 5 and dow != 6:
+                # Diurnas del sábado: separar antes / después de las 13
+                extra_before_13, extra_after_13 = self._split_extra_day_hours_at_13(
+                    shift_start, shift_end, extra_day_hours
+                )
+                # Antes de las 13 → 50%
+                extra50 += extra_before_13
+                # Después de las 13 → 100%
+                extra100 += extra_after_13
+
+            elif dow == 6:  # Domingo
+                extra_night_hours_100 += extra_night_hours
+                extra100 += extra_day_hours
+
+            else:  # Lun–Vie
+                if regular_hours > 7.0:
                     extra_night_hours_50 += extra_night_hours
                     extra50 += extra_day_hours
 
-
-
+            # === Redondeo final de extras / nocturnas / feriados (si está activado) ===
+            extra_day_hours        = self._maybe_redondear_extras(extra_day_hours)
+            extra_night_hours      = self._maybe_redondear_extras(extra_night_hours)
+            extra_night_hours_50   = self._maybe_redondear_extras(extra_night_hours_50)
+            extra_night_hours_100  = self._maybe_redondear_extras(extra_night_hours_100)
+            extra50                = self._maybe_redondear_extras(extra50)
+            extra100               = self._maybe_redondear_extras(extra100)
+            night_hours            = self._maybe_redondear_extras(night_hours)
+            holiday_hours          = self._maybe_redondear_extras(holiday_hours)
+            holiday_night_hours    = self._maybe_redondear_extras(holiday_night_hours)
 
             # ---------------- Acumulo totales ----------------
-            totals['total_days_worked']     += 1
-            totals['total_hours_worked']    += hours_worked
-            totals['total_regular_hours']   += regular_hours 
-            totals['total_extra_hours_50']  += extra50
-            totals['total_extra_hours_100'] += extra100
-            totals['total_night_hours']     += night_hours
-            totals['total_holiday_hours']   += holiday_hours
-            totals['total_tardanza_horas']  += tardanza_horas
+            totals['total_days_worked']           += 1
+            totals['total_hours_worked']          += hours_worked
+            totals['total_regular_hours']         += regular_hours 
+            totals['total_extra_hours_50']        += extra50
+            totals['total_extra_hours_100']       += extra100
+            totals['total_night_hours']           += night_hours
+            totals['total_holiday_hours']         += holiday_hours
+            totals['total_tardanza_horas']        += tardanza_horas
             totals['total_retiro_anticipado_horas'] += retiro_horas
-            totals['total_extra_day_hours']   += extra_day_hours      # ← NUEVO
-            totals['total_extra_night_hours'] += extra_night_hours    # ← NUEVO
-            totals['total_extra_night_hours_50'] += extra_night_hours_50
+            totals['total_extra_day_hours']       += extra_day_hours
+            totals['total_extra_night_hours']     += extra_night_hours
+            totals['total_extra_night_hours_50']  += extra_night_hours_50
             totals['total_extra_night_hours_100'] += extra_night_hours_100
-                        
+            totals['total_holiday_night_hours']   += holiday_night_hours
+
             if not has_time_off and not has_absence:
                 totals['total_pending_hours'] += pending
 
             # Agregar entrada diaria
             daily_data.append({
-      
                 'employee_id': employee_info.get('employeeInternalId'),
                 'date': out_date_str,
-                'day_of_week': self.get_day_of_week_spanish(datetime.strptime(out_date_str, '%Y-%m-%d')),
+                'day_of_week': self.get_day_of_week_spanish(
+                    datetime.strptime(out_date_str, '%Y-%m-%d')
+                ),
                 'hours_worked': hours_worked,
                 'regular_hours': regular_hours,
                 'extra_hours': extra_hours,
@@ -511,20 +652,21 @@ class ArgentineHoursCalculator:
                 'holiday_name': holiday_name,
                 'is_rest_day': bool(is_rest_day),
                 'has_time_off': has_time_off,
-                'time_off_name': (day_summary.get('timeOffRequests') or [{}])[0].get('name') if has_time_off else None,
+                'time_off_name': (
+                    (day_summary.get('timeOffRequests') or [{}])[0].get('name')
+                    if has_time_off else None
+                ),
                 'has_absence': has_absence,
                 'is_full_time': hours_worked >= regular_hours,
                 'shift_start': shift_start,
                 'shift_end': shift_end,
                 'time_range': time_range,
-                'extra_hours_day': extra_day_hours,        # ← NUEVO
-                'extra_hours_night': extra_night_hours,    # ← NUEVO
+                'extra_hours_day': extra_day_hours,
+                'extra_hours_night': extra_night_hours,
                 'extra_night_hours_50': extra_night_hours_50,
-                'extra_night_hours_100': extra_night_hours_100
-
-                
+                'extra_night_hours_100': extra_night_hours_100,
+                'holiday_night_hours': holiday_night_hours,
             })
-
 
         return {
             'employee_info': employee_info,
@@ -533,8 +675,6 @@ class ArgentineHoursCalculator:
         }
 
     # -------------------- Otras utilidades --------------------
-
-
 
     def get_day_of_week_spanish(self, date: datetime) -> str:
         days = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo']
@@ -561,10 +701,12 @@ class ArgentineHoursCalculator:
 
 
 # Funciones de compatibilidad
-def process_employee_data_from_day_summaries(day_summaries: List[Dict], employee_info: Dict,
-                                             previous_pending_hours: float = 0,
-                                             period_dates: Dict = None, holidays: Optional[Set[str]] = None) -> Dict:
+def process_employee_data_from_day_summaries(
+    day_summaries: List[Dict],
+    employee_info: Dict,
+    previous_pending_hours: float = 0,
+    period_dates: Dict = None,
+    holidays: Optional[Set[str]] = None
+) -> Dict:
     calc = ArgentineHoursCalculator()
     return calc.process_employee_data(day_summaries, employee_info, previous_pending_hours, holidays or set())
-
-
